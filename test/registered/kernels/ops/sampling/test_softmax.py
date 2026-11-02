@@ -4,7 +4,7 @@ register_cuda_ci(est_time=10, stage="base-b-kernel-unit", runner_config="1-gpu-s
 # SM100 runs exercise the native Cake path for eligible shapes.
 register_cuda_ci(est_time=10, stage="base-b-kernel-unit", runner_config="4-gpu-b200")
 # backend-specific: ROCm uses the temperature_softmax kernel for per-row scaling.
-register_amd_ci(est_time=10, stage="stage-b", runner_config="1-gpu-small-amd")
+register_amd_ci(est_time=10, stage="base-b", runner_config="1-gpu-small-mi30x")
 
 import unittest
 from itertools import product
