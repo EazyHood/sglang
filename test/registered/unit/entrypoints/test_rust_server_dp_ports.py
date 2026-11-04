@@ -77,6 +77,8 @@ def _scheduler_for_typed_config(load_snapshot_writer=None):
             "default_priority_value",
             5,
         ),
+        ({"api_key": "sk-api"}, "api_key", "sk-api"),
+        ({"admin_api_key": "sk-admin"}, "admin_api_key", "sk-admin"),
         ({}, "limit_mm_data_per_request", []),
         (
             {"limit_mm_data_per_request": {"video": 1, "image": 2}},
@@ -98,6 +100,8 @@ def _scheduler_for_typed_config(load_snapshot_writer=None):
         "deprecated-legacy-smg",
         "priority-off",
         "priority-on",
+        "api-key",
+        "admin-api-key",
         "mm-limits-unset",
         "mm-limits-keep-order",
         "loaded-tokenizer",
@@ -285,13 +289,15 @@ def test_dp_leaders_reuse_node_local_ports(
         patch.object(rust_extensions, "load_rust_extension") as extension,
         patch.object(rust_server, "_partition_cores", return_value=(None, None)),
         patch.object(rust_server, "_build_server_args"),
+        # A mock server would report a startup failure and signal the parent.
+        patch.object(rust_server.RustServer, "_watch_startup_failure"),
     ):
         parallel = get_parallel()
         ports = []
         for dp_rank, tp_rank in enumerate(ranks):
             scheduler = SimpleNamespace(
                 server_args=SimpleNamespace(),
-                model_config=SimpleNamespace(is_multimodal=False),
+                model_config=SimpleNamespace(is_multimodal=False, is_generation=True),
             )
             with parallel.override(
                 tp_rank=tp_rank,
@@ -317,10 +323,12 @@ def test_plain_dp_replicas_bind_their_own_ports():
         patch.object(rust_extensions, "load_rust_extension") as extension,
         patch.object(rust_server, "_partition_cores", return_value=(None, None)),
         patch.object(rust_server, "_build_server_args"),
+        # A mock server would report a startup failure and signal the parent.
+        patch.object(rust_server.RustServer, "_watch_startup_failure"),
     ):
         scheduler = SimpleNamespace(
             server_args=SimpleNamespace(),
-            model_config=SimpleNamespace(is_multimodal=False),
+            model_config=SimpleNamespace(is_multimodal=False, is_generation=True),
         )
         ports = []
         for dp_rank in range(2):

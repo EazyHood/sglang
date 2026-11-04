@@ -51,6 +51,8 @@ def _server_args(ext, port: int):
         host="127.0.0.1",
         port=port,
         grpc_port=None,
+        api_key=None,
+        admin_api_key=None,
         log_level="warning",
         log_level_http=None,
         chat_template=None,

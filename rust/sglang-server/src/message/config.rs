@@ -134,6 +134,9 @@ pub struct ServerArgs {
     /// Optional gRPC base port. The same per-rank offset as HTTP is applied at
     /// the Python→Rust startup boundary; `None` keeps gRPC disabled.
     pub grpc_port: Option<u16>,
+    /// `--api-key` / `--admin-api-key`, enforced on the HTTP routes as
+    /// Python's `add_api_key_middleware` enforces them.
+    pub api_keys: ApiKeys,
     /// Log levels driving the access log — uvicorn runs at
     /// `log_level_http or log_level` (see [`Self::http_access_log_enabled`]).
     pub log_level: String,
@@ -260,6 +263,8 @@ impl ServerArgs {
         host,
         port,
         grpc_port,
+        api_key,
+        admin_api_key,
         log_level,
         log_level_http,
         chat_template,
@@ -318,6 +323,8 @@ impl ServerArgs {
         host: String,
         port: u16,
         grpc_port: Option<u16>,
+        api_key: Option<String>,
+        admin_api_key: Option<String>,
         log_level: String,
         log_level_http: Option<String>,
         chat_template: Option<String>,
@@ -374,6 +381,7 @@ impl ServerArgs {
             host,
             port,
             grpc_port,
+            api_keys: ApiKeys::new(api_key, admin_api_key),
             log_level,
             log_level_http,
             chat_template,
@@ -439,6 +447,7 @@ impl Default for ServerArgs {
             host: "127.0.0.1".into(),
             port: 30000,
             grpc_port: None,
+            api_keys: ApiKeys::default(),
             log_level: "info".into(),
             log_level_http: None,
             chat_template: None,
@@ -480,6 +489,36 @@ impl Default for ServerArgs {
             crash_dump: false,
             server_added_custom_params: Vec::new(),
         }
+    }
+}
+
+/// The server's API keys. An empty key is no key, as in Python, whose checks
+/// test the keys' truthiness. `Debug` does not print them.
+#[derive(Clone, Default)]
+pub struct ApiKeys {
+    pub api_key: Option<String>,
+    pub admin_api_key: Option<String>,
+}
+
+impl ApiKeys {
+    pub fn new(api_key: Option<String>, admin_api_key: Option<String>) -> Self {
+        let non_empty = |key: Option<String>| key.filter(|key| !key.is_empty());
+        Self {
+            api_key: non_empty(api_key),
+            admin_api_key: non_empty(admin_api_key),
+        }
+    }
+}
+
+impl std::fmt::Debug for ApiKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKeys")
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field(
+                "admin_api_key",
+                &self.admin_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
     }
 }
 
