@@ -25,11 +25,12 @@ from sglang.srt.layers.cp.utils import (
     get_cp_sharded_padded_allocation_size,
     get_cp_sharded_padded_cache_transfer_indices,
 )
-from sglang.srt.mem_cache.base_prefix_cache import BasePrefixCache, EvictParams
+from sglang.srt.mem_cache.base_prefix_cache import BasePrefixCache
 from sglang.srt.mem_cache.common import (
     available_and_evictable_str,
     evict_from_tree_cache,
 )
+from sglang.srt.mem_cache.kv.alloc.demand import KVDemand
 from sglang.srt.mem_cache.memory_pool import ReqToTokenPool
 from sglang.srt.mem_cache.static_kv_storage import kv_storage_of
 from sglang.srt.runtime_context import attention_backends, get_parallel, get_schedule
@@ -265,11 +266,8 @@ def ensure_mamba_capacity(
     # Byte-coordinated for the shared allocator; plain free slots otherwise.
     allocator = state.slots
     supports_mamba = tree_cache is not None and tree_cache.supports_mamba()
-    available = allocator.schedulable_available_size()
-    if available < needed and supports_mamba:
-        tree_cache.evict_for_alloc(
-            EvictParams(num_tokens=0, mamba_num=needed - available)
-        )
+    if allocator.schedulable_available_size() < needed and supports_mamba:
+        tree_cache.evict_for_alloc(KVDemand(state_slots=needed))
     return allocator.schedulable_available_size() >= needed
 
 

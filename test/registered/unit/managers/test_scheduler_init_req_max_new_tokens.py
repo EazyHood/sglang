@@ -213,7 +213,9 @@ class TestSchedulerInitReqMaxNewTokens(unittest.TestCase):
             end_layer=2,
             swa_attention_layer_ids=[1],
             full_attention_layer_ids=[0],
-            total_bytes=768,
+            # Eight pages: a prompt of up to two pages, its decode token and the
+            # one page of allocation rounding admission charges per sub-pool.
+            total_bytes=1024,
             enable_memory_saver=False,
             need_sort=False,
             lazy_compaction=True,
