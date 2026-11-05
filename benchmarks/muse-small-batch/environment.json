@@ -1,0 +1,38 @@
+{
+  "date": "2026-11-05",
+  "platform": "Windows",
+  "python": "3.14.5",
+  "torch": "2.13.0+cu130",
+  "triton_module": "3.7.1",
+  "triton_distribution": "triton-windows==3.7.1.post27",
+  "cuda_runtime": "13.0",
+  "nvidia_driver": "610.62",
+  "gpu": "NVIDIA GeForce RTX 5060 Laptop GPU",
+  "compute_capability": [
+    12,
+    0
+  ],
+  "cpu_threads_for_test": 1,
+  "candidate_commit": "f75b1520ea29d90fc091331242f15b581ecd043b",
+  "candidate_git_blob": "e4cc1ea007131d7c48ca8c5a43be763973dc9c24",
+  "harness_sha256": "88de9c67646572ea1ca0ef44e27c1889d86a61a265a8df3f39fa609b662eceb1",
+  "arguments": [
+    "--device",
+    "all",
+    "--samples",
+    "21",
+    "--replays",
+    "200"
+  ],
+  "scope": "Isolated operator on local GPU; no H200, full model, TP8 or serving validation",
+  "unit_tests": {
+    "launch_instrumentation": {
+      "passed": 5,
+      "failed": 0
+    },
+    "report_validation": {
+      "passed": 8,
+      "failed": 0
+    }
+  }
+}

@@ -1,0 +1,43 @@
+diff --git a/python/sglang/kernels/ops/muse_spark_v12/fused_post_expert_norm_weighted_sum_triton.py b/python/sglang/kernels/ops/muse_spark_v12/fused_post_expert_norm_weighted_sum_triton.py
+index b2092f6..e4cc1ea 100644
+--- a/python/sglang/kernels/ops/muse_spark_v12/fused_post_expert_norm_weighted_sum_triton.py
++++ b/python/sglang/kernels/ops/muse_spark_v12/fused_post_expert_norm_weighted_sum_triton.py
+@@ -74,7 +74,37 @@ def fused_post_expert_norm_weighted_sum(
+     out = torch.empty((tokens, hidden), dtype=x.dtype, device=x.device)
+     if tokens == 0:
+         return out
+-    if tokens < _MIN_TOKENS_FOR_FUSED:
++    # Small inference batches can avoid the separate pointwise/reduction launches.
++    # Keep the existing fallback for devices, layouts and autograd it supports.
++    fused_small_batch = (
++        tokens < _MIN_TOKENS_FOR_FUSED
++        and x.is_cuda
++        and torch.version.hip is None
++        and x.dtype in (torch.float16, torch.bfloat16, torch.float32)
++        and hidden > 0
++        and topk > 0
++        and topk_scores.shape == (tokens, topk)
++        and (
++            norm_weight is None
++            or (norm_weight.is_contiguous() and norm_weight.shape == (hidden,))
++        )
++        and (
++            slot_expert_ids is None
++            or (
++                slot_expert_ids.is_contiguous()
++                and slot_expert_ids.numel() == tokens * topk
++            )
++        )
++        and not (
++            torch.is_grad_enabled()
++            and (
++                x.requires_grad
++                or topk_scores.requires_grad
++                or (norm_weight is not None and norm_weight.requires_grad)
++            )
++        )
++    )
++    if tokens < _MIN_TOKENS_FOR_FUSED and not fused_small_batch:
+         y = x
+         if slot_expert_ids is not None:
+             y = torch.where(
