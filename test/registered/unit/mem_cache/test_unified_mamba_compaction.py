@@ -547,6 +547,8 @@ class TestForwardWriteSets(CustomTestCase):
             self.assertIs(use.signal, done)
             self.assertIs(use.ids, ids)
             self.assertTrue(use.writes)
+            self.assertIsNone(use.release)
+            self.assertIsNone(use.unit_tokens)  # controller ids, translated when read
         done.fired = True
         allocator.full_attn_allocator.usage.prune()
         self.assertEqual(allocator.full_attn_allocator.usage.transfers(), [])

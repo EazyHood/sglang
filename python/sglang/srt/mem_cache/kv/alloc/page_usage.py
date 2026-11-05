@@ -7,8 +7,10 @@ runs. Every move, reuse and write decision of the band reads this
 ledger: a copy waits the writers of its sources, a vacated page returns to the
 free list once its readers retired, and a write into vacated bytes outside the
 band waits their readers. Decisions read retirement (a forward the scheduler
-processed), never whether an event has fired, so every rank makes the same
-ones. A stream waits on the events themselves.
+processed, a transfer released where every rank sees it), never whether an
+event has fired, so every rank makes the same ones. A stream waits on the
+events themselves; a network transfer is waited for on the host
+(`signals.NetworkTransfer`).
 
 Whether a page may be written is one rule, `CLEARANCE`: what its next writer
 (a `Consumer`) must wait for, given each `Hazard` the ledger records on it. A
@@ -21,7 +23,12 @@ from typing import Dict, Hashable, List, Optional, Sequence, Set, Tuple
 
 import torch
 
-from sglang.srt.mem_cache.kv.alloc.signals import signal_fired, signals_of
+from sglang.srt.mem_cache.kv.alloc.signals import (
+    ReceiveHold,
+    TransferRelease,
+    signal_fired,
+    signals_of,
+)
 
 FORWARD = "forward"
 TRANSFER = "transfer"
@@ -68,7 +75,7 @@ class Wait(enum.Enum):
     NONE = "none"
     # The consumer's stream waits the hazard's event (on the GPU).
     STREAM = "stream"
-    # The host waits until the network engine is done.
+    # The host waits until the network engine is done (`NetworkWaiter`).
     HOST = "host"
     # The consumer may start only once the hazard's forward retired: the page's
     # id must not reach a network peer before then.
@@ -159,9 +166,10 @@ class Clearance:
 class PageUse:
     """One use of a band's pages.
 
-    ``signal``: what a wait for the use to end waits for (a CUDA event, or a
-    tuple of them). ``ids``: controller ids translated to pages when read;
-    None for a forward whose writes are unknown. A vacated
+    ``signal``: what a wait for the use to end waits for (a CUDA event, a
+    network transfer, or a tuple of them). ``ids``: controller ids
+    translated to pages when read, or with ``unit_tokens`` physical units the
+    engine was handed; None for a forward whose writes are unknown. A vacated
     use holds byte range ``[lo, hi)``, and, when the pages return to this
     band's free list, their ids on the host and on the device (``pages``,
     ``batch``). A recent use holds, in ``batch``, device page ids freed while
@@ -172,6 +180,8 @@ class PageUse:
         "signal",
         "writes",
         "ids",
+        "unit_tokens",
+        "release",
         "lo",
         "hi",
         "pages",
@@ -185,6 +195,8 @@ class PageUse:
         *,
         writes: bool = False,
         ids=None,
+        unit_tokens: Optional[int] = None,
+        release: Optional[TransferRelease] = None,
         lo: int = 0,
         hi: int = 0,
         pages: Optional[List[int]] = None,
@@ -194,6 +206,8 @@ class PageUse:
         self.signal = signal
         self.writes = writes
         self.ids = ids
+        self.unit_tokens = unit_tokens
+        self.release = release
         self.lo = lo
         self.hi = hi
         self.pages = pages
@@ -228,12 +242,15 @@ class PageUsage:
 
     def retired(self, key) -> bool:
         """Whether the work behind ``key`` retired: a forward once the
-        scheduler processed it (a forgotten event is a retired one). A tuple
-        retires with all of its members."""
+        scheduler processed it (a forgotten event is a retired one), a
+        host-observed transfer once released. A tuple retires with all of its
+        members."""
         if key is None:
             return True
         if isinstance(key, tuple):
             return all(self.retired(k) for k in key)
+        if isinstance(key, TransferRelease):
+            return key.released
         return self.event_seq.get(key, 0) <= self.retired_seq
 
     def retire_forward(self, event) -> None:
@@ -289,9 +306,26 @@ class PageUsage:
         elif ids is not None and ids.numel() > 0:
             self.uses.append(PageUse(FORWARD, event, writes=True, ids=ids))
 
-    def record_transfer(self, signal, ids, *, writes: bool) -> None:
+    def record_transfer(
+        self,
+        signal,
+        ids,
+        *,
+        writes: bool,
+        release: Optional[TransferRelease],
+        unit_tokens: Optional[int],
+    ) -> None:
         self.prune()
-        self.uses.append(PageUse(TRANSFER, signal, writes=writes, ids=ids))
+        self.uses.append(
+            PageUse(
+                TRANSFER,
+                signal,
+                writes=writes,
+                ids=ids,
+                unit_tokens=unit_tokens,
+                release=release,
+            )
+        )
 
     def vacate(
         self,
@@ -406,8 +440,8 @@ class PageUsage:
     # -- reading --
 
     def prune(self) -> None:
-        """Drop forwards that retired, and transfers whose signal completed:
-        they only decided waits."""
+        """Drop forwards that retired, and transfers that were released or,
+        without a release, whose signal completed: they only decided waits."""
         self.uses = [use for use in self.uses if not self._ended(use)]
 
     def _ended(self, use: PageUse) -> bool:
@@ -418,6 +452,8 @@ class PageUsage:
         if use.kind == FORWARD:
             return self.retired(use.signal)
         if use.kind == TRANSFER:
+            if use.release is not None:
+                return self.retired(use.release)
             return signal_fired(use.signal)
         return False
 
@@ -426,6 +462,15 @@ class PageUsage:
 
     def transfers(self) -> List[PageUse]:
         return [use for use in self.uses if use.kind == TRANSFER]
+
+    def holds_receive_rows(self) -> bool:
+        """Whether receive rows are held for a publish still to come."""
+        return any(
+            use.kind == TRANSFER
+            and isinstance(use.release, ReceiveHold)
+            and not use.release.released
+            for use in self.uses
+        )
 
     def writes_unknown(self) -> bool:
         return any(use.kind == FORWARD and use.ids is None for use in self.uses)
@@ -469,10 +514,13 @@ class PageUsage:
 
     def hazards(self, use: PageUse) -> List[Tuple[Hazard, object]]:
         """What a fence (a vacated byte range) still guards against, one entry
-        per signal: a forward of this ledger, or a host copy."""
+        per signal: a network transfer, a forward of this ledger, or a host
+        copy."""
         out = []
         for key in signals_of(use.signal):
-            if key in self.event_seq:
+            if isinstance(key, TransferRelease):
+                out.append((Hazard.NETWORK, key))
+            elif key in self.event_seq:
                 hazard = Hazard.FORWARD_WRITE if use.writes else Hazard.FORWARD_READ
                 out.append((hazard, key))
             else:
@@ -556,9 +604,10 @@ class PageUsage:
 
     def fences_need(self, lo: int, hi: int, consumers: Sequence[Consumer]) -> bool:
         """Whether a fence meeting bytes ``[lo, hi)`` holds an unretired forward
-        that one of ``consumers`` must clear; removes nothing. It picks which
-        pages a take prefers, so it reads retirement only, alike on every rank:
-        a host copy, which has no logical release, only ever adds a wait."""
+        or an unreleased network transfer that one of ``consumers`` must clear;
+        removes nothing. It picks which pages a take prefers, so it reads
+        retirement and releases only, alike on every rank: a host copy, which
+        has no logical release, only ever adds a wait."""
         for use in self.uses:
             if not (
                 use.kind == VACATED
