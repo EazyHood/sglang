@@ -416,7 +416,9 @@ class TestDeferredDestinationPublish(CustomTestCase):
             translate_kv_indices_for_transfer=lambda indices: indices,
             window_pool_names=lambda: (),
         )
-        queue.kv_manager = SimpleNamespace(kv_args=SimpleNamespace(state_types=[]))
+        queue.kv_manager = SimpleNamespace(
+            kv_args=SimpleNamespace(state_types=[], state_sub_pools=[])
+        )
         queue.transfer_queue = SimpleNamespace(
             queue=decode_queue(ListKind.PD_RECEIVING),
             enable_staging=False,
